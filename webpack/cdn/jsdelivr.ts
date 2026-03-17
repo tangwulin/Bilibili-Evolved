@@ -29,6 +29,10 @@ export const jsDelivr: CdnConfig = {
       url: `https://${host}/npm/streamsaver@2.0.6/StreamSaver.js`,
       sha256: 'a110f78e0b092481dc372901c4d57ae50681d773bc9d55e62356f9a22f17e24b',
     },
+    mediabunny: {
+      url: `https://${host}/npm/mediabunny@1.39.2/dist/bundles/mediabunny.min.mjs`,
+      sha256: '5f0224dfee610e61756ea15d31eeb1752cab9af358dd185a4bf1f41f845e1fbd',
+    },
     ffmpeg: {
       worker: {
         url: `https://${host}/npm/@ffmpeg/ffmpeg@0.12.4/dist/umd/814.ffmpeg.js`,

@@ -30,6 +30,7 @@ export const github: CdnConfig = {
       url: `https://${host}/jimmywarting/StreamSaver.js/2.0.6/StreamSaver.js`,
       sha256: 'a110f78e0b092481dc372901c4d57ae50681d773bc9d55e62356f9a22f17e24b',
     },
+    mediabunny: jsDelivr.library.mediabunny,
     // https://github.com/the1812/Bilibili-Evolved/pull/4521#discussion_r1402084486
     ffmpeg: jsDelivr.library.ffmpeg,
   },

@@ -2,6 +2,7 @@ import type protobufType from 'protobufjs'
 import type JSZipType from 'jszip'
 import type SortableJSType from 'sortablejs'
 import type StreamSaverType from 'streamsaver'
+import type * as MediaBunnyType from 'mediabunny'
 import { monkey } from './ajax'
 import { meta } from './meta'
 
@@ -105,4 +106,8 @@ export const SortableJSLibrary = new RuntimeLibrary<typeof SortableJSType>({
 export const StreamSaverLibrary = new RuntimeLibrary<typeof StreamSaverType>({
   library: meta.compilationInfo.altCdn.library.streamsaver,
   getModule: window => window.streamSaver,
+})
+export const MediaBunnyLibrary = new RuntimeLibrary<typeof MediaBunnyType>({
+  library: meta.compilationInfo.altCdn.library.mediabunny,
+  getModule: window => (window as any).Mediabunny,
 })

@@ -11,6 +11,7 @@ export interface CdnConfig {
     jszip: ExternalLibrary
     sortable: ExternalLibrary
     streamsaver: ExternalLibrary
+    mediabunny: ExternalLibrary
     ffmpeg: {
       worker: ExternalLibrary
       core: ExternalLibrary
