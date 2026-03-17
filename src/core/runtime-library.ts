@@ -54,22 +54,32 @@ export class RuntimeLibrary<LibraryType> implements PromiseLike<LibraryType> {
           console.log(`[Runtime Library] Downloaded from ${url}, length = ${code.length}`)
           await this.checkIntegrity(code)
 
-          const module = { exports: {} }
-          const { exports } = module
-          const result = function runEval() {
-            // eslint-disable-next-line no-eval
+          // Detect ESM
+          // Simple heuristic: check for 'export ' or 'export{' at the beginning of lines or after semicolons
+          const isEsm = /\bexport\s*(?:\{|const|let|var|function|class|default)\b/.test(code)
+
+          if (isEsm) {
+            console.log(`[Runtime Library] Detected ESM for ${url}`)
+            const blob = new Blob([code], { type: 'application/javascript' })
+            const blobUrl = URL.createObjectURL(blob)
+            try {
+              const module = await import(/* webpackIgnore: true */ blobUrl)
+              // ESM exports can be in module.default or module itself
+              // Usually, getModule(window) won't work for ESM unless it also sets window
+              const library = getModule(window)
+              if (library !== undefined && library !== null) {
+                return library
+              }
+              return (module.default || module) as LibraryType
+            } finally {
+              URL.revokeObjectURL(blobUrl)
+            }
+          }
+          ;(function runEval() {
             return eval(code)
             // eslint-disable-next-line no-extra-bind
-          }.bind(window)()
-
-          const library = getModule(window)
-          if (library !== undefined && library !== null) {
-            return library
-          }
-          if (module.exports !== exports || Object.keys(module.exports).length > 0) {
-            return module.exports as LibraryType
-          }
-          return result
+          }).bind(window)()
+          return getModule(window)
         })()
       }
       const library = await this.modulePromise
