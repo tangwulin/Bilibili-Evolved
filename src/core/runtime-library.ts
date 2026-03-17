@@ -53,11 +53,23 @@ export class RuntimeLibrary<LibraryType> implements PromiseLike<LibraryType> {
           const code: string = await monkey({ url })
           console.log(`[Runtime Library] Downloaded from ${url}, length = ${code.length}`)
           await this.checkIntegrity(code)
-          ;(function runEval() {
+
+          const module = { exports: {} }
+          const { exports } = module
+          const result = function runEval() {
+            // eslint-disable-next-line no-eval
             return eval(code)
             // eslint-disable-next-line no-extra-bind
-          }).bind(window)()
-          return getModule(window)
+          }.bind(window)()
+
+          const library = getModule(window)
+          if (library !== undefined && library !== null) {
+            return library
+          }
+          if (module.exports !== exports || Object.keys(module.exports).length > 0) {
+            return module.exports as LibraryType
+          }
+          return result
         })()
       }
       const library = await this.modulePromise
