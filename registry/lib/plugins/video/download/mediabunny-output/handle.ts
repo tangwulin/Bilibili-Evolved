@@ -5,12 +5,13 @@ import { title as pluginTitle } from '.'
 import type { Options } from './types'
 import { DownloadVideoAction } from '../../../../components/video/download/types'
 import { MediaBunnyLibrary, StreamSaverLibrary } from '@/core/runtime-library'
-import { downloadToOPFS, formatProgress } from './util'
+import { downloadToOPFS, formatProgress, getStreamWithProgress } from './util'
 
 const defaultOptions: Options = {
   mediabunnyFormat: 'mp4',
   mediabunnyFastStart: 'reserve',
   mediabunnyOutputMethod: 'file-system-access',
+  mediabunnyInputMethod: 'stream',
 }
 
 const pendingCleanupFiles = new Set<string>()
@@ -67,6 +68,7 @@ async function single(
   options: Options,
   pageIndex = 1,
   totalPages = 1,
+  duration = 0,
 ) {
   const toast = Toast.info('', `${pluginTitle} - ${pageIndex} / ${totalPages}`)
   const lines: string[] = []
@@ -81,25 +83,16 @@ async function single(
 
   const vFileName = `temp_video_${pageIndex}.m4s`
   const aFileName = `temp_audio_${pageIndex}.m4s`
-  pendingCleanupFiles.add(vFileName)
-  pendingCleanupFiles.add(aFileName)
+
+  const {
+    mediabunnyFormat: selectedFormat,
+    mediabunnyFastStart: selectedFastStart,
+    mediabunnyInputMethod: selectedInputMethod,
+  } = options
 
   try {
-    const { mediabunnyFormat: selectedFormat, mediabunnyFastStart: selectedFastStart } = options
-
-    const [vHandle, aHandle] = await Promise.all([
-      downloadToOPFS(videoUrl, vFileName, downloadProgress(0, '下载视频流')),
-      downloadToOPFS(audioUrl, aFileName, downloadProgress(1, '下载音频流')),
-    ])
-
-    const vBlob = await vHandle.getFile()
-    const aBlob = await aHandle.getFile()
-
-    lines[0] = '下载视频流: 完成'
-    lines[1] = '下载音频流: 完成'
-    lines[2] = '正在加载混流引擎...'
+    lines[0] = '正在加载混流引擎...'
     updateToast()
-
     const MediaBunny = await MediaBunnyLibrary
     const {
       ALL_FORMATS,
@@ -112,22 +105,59 @@ async function single(
       MkvOutputFormat,
       Output,
       StreamTarget,
+      ReadableStreamSource,
     } = MediaBunny
+
+    let vSource: any
+    let aSource: any
+
+    if (selectedInputMethod === 'buffer') {
+      pendingCleanupFiles.add(vFileName)
+      pendingCleanupFiles.add(aFileName)
+
+      const [vHandle, aHandle] = await Promise.all([
+        downloadToOPFS(videoUrl, vFileName, downloadProgress(0, '下载视频流')),
+        downloadToOPFS(audioUrl, aFileName, downloadProgress(1, '下载音频流')),
+      ])
+
+      const [vBlob, aBlob] = await Promise.all([vHandle.getFile(), aHandle.getFile()])
+      vSource = new BlobSource(vBlob)
+      aSource = new BlobSource(aBlob)
+
+      lines[0] = '下载视频流: 完成'
+      lines[1] = '下载音频流: 完成'
+    } else {
+      lines[0] = '下载视频流: 启动中...'
+      lines[1] = '下载音频流: 启动中...'
+      updateToast()
+
+      const [vResult, aResult] = await Promise.all([
+        getStreamWithProgress(videoUrl, downloadProgress(0, '下载视频流')),
+        getStreamWithProgress(audioUrl, downloadProgress(1, '下载音频流')),
+      ])
+      vSource = new ReadableStreamSource(vResult.stream)
+      aSource = new ReadableStreamSource(aResult.stream)
+    }
 
     lines[2] = '初始化混流引擎...'
     updateToast()
 
     const videoInput = new Input({
-      source: new BlobSource(vBlob),
+      source: vSource,
       formats: ALL_FORMATS,
     })
     const audioInput = new Input({
-      source: new BlobSource(aBlob),
+      source: aSource,
       formats: ALL_FORMATS,
     })
 
-    const videoTrack = await videoInput.getPrimaryVideoTrack()
-    const audioTrack = await audioInput.getPrimaryAudioTrack()
+    lines[2] = '正在分析媒体轨道...'
+    updateToast()
+
+    const [videoTrack, audioTrack] = await Promise.all([
+      videoInput.getPrimaryVideoTrack(),
+      audioInput.getPrimaryAudioTrack(),
+    ])
 
     if (!videoTrack) {
       throw new Error('视频文件中找不到视频轨道')
@@ -139,12 +169,17 @@ async function single(
     const videoDecoderConfig = await videoTrack.getDecoderConfig()
     const audioDecoderConfig = await audioTrack.getDecoderConfig()
 
-    lines[2] = '正在分析媒体轨道...'
-    updateToast()
-    const [videoStats, audioStats] = await Promise.all([
-      videoTrack.computePacketStats(),
-      audioTrack.computePacketStats(),
-    ])
+    let videoStats: any = null
+    let audioStats: any = null
+
+    if (selectedInputMethod === 'buffer') {
+      const [vStats, aStats] = await Promise.all([
+        videoTrack.computePacketStats(),
+        audioTrack.computePacketStats(),
+      ])
+      videoStats = vStats
+      audioStats = aStats
+    }
 
     let target: any
     let mbReadableStream: ReadableStream | null = null
@@ -181,11 +216,11 @@ async function single(
 
     output.addVideoTrack(videoSource, {
       rotation: videoTrack.rotation,
-      frameRate: videoStats.averagePacketRate,
-      maximumPacketCount: videoStats.packetCount,
+      frameRate: videoStats?.averagePacketRate,
+      maximumPacketCount: videoStats?.packetCount,
     })
     output.addAudioTrack(audioSource, {
-      maximumPacketCount: audioStats.packetCount,
+      maximumPacketCount: audioStats?.packetCount,
     })
 
     const pipePromise = mbReadableStream?.pipeTo(writableStream)
@@ -200,7 +235,6 @@ async function single(
       videoLastTimestamp: 0,
       audioLastTimestamp: 0,
     }
-    const MAX_TIME_DIFF = 2
 
     const updateMuxProgress = () => {
       const totalProgress = (videoProgress + audioProgress) / 2
@@ -210,20 +244,13 @@ async function single(
 
     const videoProcess = async () => {
       const sink = new EncodedPacketSink(videoTrack)
-      const stats = videoStats
       const meta = { decoderConfig: videoDecoderConfig ?? undefined }
       let count = 0
       for await (const packet of sink.packets()) {
         await videoSource.add(packet, meta)
         state.videoLastTimestamp = packet.timestamp
         count++
-        while (
-          !state.audioFinished &&
-          state.videoLastTimestamp - state.audioLastTimestamp > MAX_TIME_DIFF
-        ) {
-          await new Promise(r => setTimeout(r, 100))
-        }
-        videoProgress = count / stats.packetCount
+        videoProgress = videoStats ? count / videoStats.packetCount : packet.timestamp / duration
         updateMuxProgress()
       }
       state.videoFinished = true
@@ -232,20 +259,13 @@ async function single(
 
     const audioProcess = async () => {
       const sink = new EncodedPacketSink(audioTrack)
-      const stats = audioStats
       const meta = { decoderConfig: audioDecoderConfig ?? undefined }
       let count = 0
       for await (const packet of sink.packets()) {
         await audioSource.add(packet, meta)
         state.audioLastTimestamp = packet.timestamp
         count++
-        while (
-          !state.videoFinished &&
-          state.audioLastTimestamp - state.videoLastTimestamp > MAX_TIME_DIFF
-        ) {
-          await new Promise(r => setTimeout(r, 100))
-        }
-        audioProgress = count / stats.packetCount
+        audioProgress = audioStats ? count / audioStats.packetCount : packet.timestamp / duration
         updateMuxProgress()
       }
       state.audioFinished = true
@@ -261,29 +281,33 @@ async function single(
 
     lines[2] = '混流完成！'
     updateToast()
-    toast.duration = 1000
+    toast.duration = 3000
 
-    const root = await navigator.storage.getDirectory()
-    await root.removeEntry(vFileName)
-    await root.removeEntry(aFileName)
-    pendingCleanupFiles.delete(vFileName)
-    pendingCleanupFiles.delete(aFileName)
-
-    videoInput.dispose()
-    audioInput.dispose()
-  } catch (error) {
-    try {
+    if (selectedInputMethod === 'buffer') {
       const root = await navigator.storage.getDirectory()
       await root.removeEntry(vFileName)
       await root.removeEntry(aFileName)
       pendingCleanupFiles.delete(vFileName)
       pendingCleanupFiles.delete(aFileName)
-    } catch {
-      /* ignore */
+    }
+
+    videoInput.dispose()
+    audioInput.dispose()
+  } catch (error) {
+    if (selectedInputMethod === 'buffer') {
+      try {
+        const root = await navigator.storage.getDirectory()
+        await root.removeEntry(vFileName)
+        await root.removeEntry(aFileName)
+        pendingCleanupFiles.delete(vFileName)
+        pendingCleanupFiles.delete(aFileName)
+      } catch {
+        /* ignore */
+      }
     }
     throw error
   } finally {
-    toast.close()
+    setTimeout(() => toast.close(), 10000)
   }
 }
 
@@ -388,6 +412,7 @@ export async function run(action: DownloadVideoAction) {
         options,
         i + 1,
         pages.length,
+        page.fragments[0].length,
       )
 
       if (selectedMethod === 'opfs' && opfsFileHandle) {

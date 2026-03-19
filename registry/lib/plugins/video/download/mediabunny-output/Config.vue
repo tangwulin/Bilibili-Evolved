@@ -40,6 +40,26 @@
       </div>
     </div>
     <div class="download-video-config-item" style="flex-wrap: wrap; margin-bottom: 8px">
+      <div class="download-video-config-title">源获取方式：</div>
+      <VDropdown v-model="inputMethod" :items="inputMethodOptions" @change="saveOptions">
+        <template #item="{ item }">
+          {{ inputMethodDisplayNames[item] }}
+        </template>
+      </VDropdown>
+      <div class="download-video-config-description" style="width: 100%">
+        决定如何从 Bilibili 获取视频和音频流。
+        <div v-if="inputMethod === 'stream'" style="margin-top: 4px">
+          <b>边下边合并 (流式):</b>
+          实时将网络流喂给混流引擎。速度最快, 几乎不占用额外磁盘空间。适合网络稳定的环境。
+        </div>
+        <div v-if="inputMethod === 'buffer'" style="margin-top: 4px">
+          <b>下载后合并 (暂存):</b>
+          先将流完整下载到浏览器存储中, 再进行混流。稳定性高, 速度可能更快,
+          但需要两倍的剩余磁盘空间。
+        </div>
+      </div>
+    </div>
+    <div class="download-video-config-item" style="flex-wrap: wrap; margin-bottom: 8px">
       <div class="download-video-config-title">输出方式：</div>
       <VDropdown
         v-model="outputMethod"
@@ -85,6 +105,7 @@ import { VDropdown } from '@/ui'
 import { getComponentSettings } from '@/core/settings'
 import {
   MediaBunnyFastStart,
+  MediaBunnyInputMethod,
   MediaBunnyOutputFormat,
   MediaBunnyOutputMethod,
   Options,
@@ -94,6 +115,7 @@ const defaultOptions: Options = {
   mediabunnyFormat: 'mp4',
   mediabunnyFastStart: 'reserve',
   mediabunnyOutputMethod: 'file-system-access',
+  mediabunnyInputMethod: 'buffer',
 }
 const { options: storedOptions } = getComponentSettings('downloadVideo')
 const options: Options = { ...defaultOptions, ...storedOptions }
@@ -133,6 +155,7 @@ export default Vue.extend({
       format,
       fastStart: options.mediabunnyFastStart,
       outputMethod: currentOutputMethod,
+      inputMethod: options.mediabunnyInputMethod,
       formats,
       formatDisplayNames: {
         mp4: 'MP4',
@@ -151,6 +174,11 @@ export default Vue.extend({
         'file-system-access': 'File System Access API (推荐)',
         opfs: 'OPFS 暂存',
         'stream-saver': 'StreamSaver',
+      },
+      inputMethodOptions: ['stream', 'buffer'] as MediaBunnyInputMethod[],
+      inputMethodDisplayNames: {
+        stream: '边下边合并 (流式)',
+        buffer: '下载完后合并 (暂存)',
       },
     }
   },
@@ -173,6 +201,7 @@ export default Vue.extend({
       options.mediabunnyFormat = this.format
       options.mediabunnyFastStart = this.fastStart
       options.mediabunnyOutputMethod = this.outputMethod
+      options.mediabunnyInputMethod = this.inputMethod
       Object.assign(storedOptions, options)
     },
   },
