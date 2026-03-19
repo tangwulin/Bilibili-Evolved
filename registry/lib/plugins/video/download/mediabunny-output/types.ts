@@ -1,4 +1,9 @@
-﻿export interface Options {
-  /** 目前暂无配置项，保留接口以备将来扩展 */
-  _placeholder?: never
+﻿export type MediaBunnyOutputFormat = 'mp4' | 'fragmented-mp4' | 'mkv'
+export type MediaBunnyFastStart = false | 'in-memory' | 'reserve' | 'fragmented'
+export type MediaBunnyOutputMethod = 'file-system-access' | 'opfs' | 'stream-saver'
+
+export interface Options {
+  mediabunnyFormat: MediaBunnyOutputFormat
+  mediabunnyFastStart: MediaBunnyFastStart
+  mediabunnyOutputMethod: MediaBunnyOutputMethod
 }

@@ -2,10 +2,61 @@ import { getComponentSettings } from '@/core/settings'
 import { Toast } from '@/core/toast'
 import { formatPercent } from '@/core/utils/formatters'
 import { title as pluginTitle } from '.'
-import type { Options } from '../../../../components/video/download'
+import type { Options } from './types'
 import { DownloadVideoAction } from '../../../../components/video/download/types'
-import { MediaBunnyLibrary } from '@/core/runtime-library'
+import { MediaBunnyLibrary, StreamSaverLibrary } from '@/core/runtime-library'
 import { downloadToOPFS, formatProgress } from './util'
+
+const defaultOptions: Options = {
+  mediabunnyFormat: 'mp4',
+  mediabunnyFastStart: 'reserve',
+  mediabunnyOutputMethod: 'file-system-access',
+}
+
+const pendingCleanupFiles = new Set<string>()
+
+const cleanup = async (filenames?: string | string[]) => {
+  // eslint-disable-next-line no-nested-ternary
+  const targets = filenames
+    ? Array.isArray(filenames)
+      ? filenames
+      : [filenames]
+    : [...pendingCleanupFiles]
+  if (targets.length === 0) {
+    return
+  }
+  try {
+    const root = await navigator.storage.getDirectory()
+    for (const name of targets) {
+      await root
+        .removeEntry(name)
+        .catch(error => console.error(`${pluginTitle} - 清理失败:`, error))
+      pendingCleanupFiles.delete(name)
+    }
+  } catch (error) {
+    console.error(`${pluginTitle} - 清理失败:`, error)
+  }
+}
+
+const showCleanupToast = async (filename: string) => {
+  const message = `下载已完成, 输出文件已暂存. <a class="link" data-filename="${filename}">清除缓存</a>`
+  const toast = Toast.info(message, pluginTitle, undefined)
+  const element = await toast.element
+  dqa(element, 'a[data-filename]').forEach(span => {
+    span.addEventListener(
+      'click',
+      () => {
+        cleanup(filename)
+        toast.close()
+      },
+      { once: true },
+    )
+  })
+}
+
+window.addEventListener('beforeunload', () => {
+  cleanup()
+})
 
 async function single(
   name: string,
@@ -13,6 +64,7 @@ async function single(
   audioUrl: string,
   writableStream: WritableStream,
   isAppendOnly: boolean,
+  options: Options,
   pageIndex = 1,
   totalPages = 1,
 ) {
@@ -29,9 +81,11 @@ async function single(
 
   const vFileName = `temp_video_${pageIndex}.m4s`
   const aFileName = `temp_audio_${pageIndex}.m4s`
+  pendingCleanupFiles.add(vFileName)
+  pendingCleanupFiles.add(aFileName)
 
   try {
-    const fastStart = isAppendOnly ? false : 'reserve'
+    const { mediabunnyFormat: selectedFormat, mediabunnyFastStart: selectedFastStart } = options
 
     const [vHandle, aHandle] = await Promise.all([
       downloadToOPFS(videoUrl, vFileName, downloadProgress(0, '下载视频流')),
@@ -55,6 +109,7 @@ async function single(
       EncodedVideoPacketSource,
       Input,
       Mp4OutputFormat,
+      MkvOutputFormat,
       Output,
       StreamTarget,
     } = MediaBunny
@@ -95,8 +150,6 @@ async function single(
     let mbReadableStream: ReadableStream | null = null
 
     if (isAppendOnly) {
-      // StreamTarget 发出的 chunk 是 { data: Uint8Array, position: number } 对象
-      // StreamSaver 需要的是 Uint8Array，且不支持 position。
       const { writable: mbWritable, readable: mbReadable } = new TransformStream({
         transform(chunk: { data: Uint8Array; position: number }, controller) {
           controller.enqueue(chunk.data)
@@ -105,12 +158,21 @@ async function single(
       mbReadableStream = mbReadable
       target = new StreamTarget(mbWritable, { chunked: true, chunkSize: 1024 * 1024 })
     } else {
-      // FileSystemWritableFileStream 原生支持随机访问, StreamTarget 内部会处理兼容性
       target = new StreamTarget(writableStream, { chunked: true, chunkSize: 1024 * 1024 })
     }
 
+    let outputFormat: any
+    if (selectedFormat === 'mp4') {
+      const fastStart = isAppendOnly ? false : selectedFastStart
+      outputFormat = new Mp4OutputFormat({ fastStart })
+    } else if (selectedFormat === 'fragmented-mp4') {
+      outputFormat = new Mp4OutputFormat({ fastStart: 'fragmented' })
+    } else if (selectedFormat === 'mkv') {
+      outputFormat = new MkvOutputFormat({ appendOnly: isAppendOnly })
+    }
+
     const output = new Output({
-      format: new Mp4OutputFormat({ fastStart }),
+      format: outputFormat,
       target,
     })
 
@@ -126,7 +188,6 @@ async function single(
       maximumPacketCount: audioStats.packetCount,
     })
 
-    // 如果是 StreamSaver，手动建立 pipe 链路
     const pipePromise = mbReadableStream?.pipeTo(writableStream)
 
     await output.start()
@@ -194,7 +255,6 @@ async function single(
     await Promise.all([videoProcess(), audioProcess()])
     await output.finalize()
 
-    // 等待管道传输完毕
     if (pipePromise) {
       await pipePromise
     }
@@ -206,6 +266,8 @@ async function single(
     const root = await navigator.storage.getDirectory()
     await root.removeEntry(vFileName)
     await root.removeEntry(aFileName)
+    pendingCleanupFiles.delete(vFileName)
+    pendingCleanupFiles.delete(aFileName)
 
     videoInput.dispose()
     audioInput.dispose()
@@ -214,6 +276,8 @@ async function single(
       const root = await navigator.storage.getDirectory()
       await root.removeEntry(vFileName)
       await root.removeEntry(aFileName)
+      pendingCleanupFiles.delete(vFileName)
+      pendingCleanupFiles.delete(aFileName)
     } catch {
       /* ignore */
     }
@@ -225,11 +289,22 @@ async function single(
 
 export async function run(action: DownloadVideoAction) {
   const { infos: pages } = action
-  const { dashAudioExtension, dashFlacAudioExtension, dashVideoExtension } =
-    getComponentSettings<Options>('downloadVideo').options
+  const { options: storedOptions } = getComponentSettings('downloadVideo')
+  const options: Options = { ...defaultOptions, ...storedOptions }
+  const {
+    dashAudioExtension,
+    dashFlacAudioExtension,
+    dashVideoExtension,
+    mediabunnyFormat: selectedFormat,
+    mediabunnyOutputMethod: selectedMethod,
+  } = options as any
 
   let directoryHandle: any
-  if (pages.length > 1 && 'showDirectoryPicker' in unsafeWindow) {
+  if (
+    pages.length > 1 &&
+    selectedMethod === 'file-system-access' &&
+    'showDirectoryPicker' in unsafeWindow
+  ) {
     try {
       directoryHandle = await unsafeWindow.showDirectoryPicker()
     } catch (e) {
@@ -254,43 +329,53 @@ export async function run(action: DownloadVideoAction) {
       throw new Error('仅支持 DASH 格式视频和音频')
     }
 
-    const filename = video.title
+    const formatExtensions = {
+      mp4: '.mp4',
+      'fragmented-mp4': '.mp4',
+      mkv: '.mkv',
+    }
+    const extension = formatExtensions[selectedFormat] || '.mp4'
+    const filename = video.title.replace(/\.[^/.]+$/, '') + extension
     let writableStream: WritableStream
     let isAppendOnly = false
+    let opfsFileHandle: FileSystemFileHandle | null = null
 
     if (directoryHandle) {
       const fileHandle = await directoryHandle.getFileHandle(filename, { create: true })
       writableStream = await fileHandle.createWritable()
-    } else if ('showSaveFilePicker' in unsafeWindow) {
+    } else if (selectedMethod === 'file-system-access' && 'showSaveFilePicker' in unsafeWindow) {
       try {
+        const typeConfigs = {
+          mp4: { description: 'MP4 Video', accept: { 'video/mp4': ['.mp4'] } },
+          'fragmented-mp4': {
+            description: 'Fragmented MP4 Video',
+            accept: { 'video/mp4': ['.mp4'] },
+          },
+          mkv: { description: 'Matroska Video', accept: { 'video/x-matroska': ['.mkv'] } },
+        }
         const saveHandle = await unsafeWindow.showSaveFilePicker({
           suggestedName: filename,
-          types: [
-            {
-              description: 'MP4 Video',
-              accept: { 'video/mp4': ['.mp4'] },
-            },
-          ],
+          types: [typeConfigs[selectedFormat] || typeConfigs.mp4],
         })
-
         writableStream = await saveHandle.createWritable()
       } catch (e) {
         if (e.name === 'AbortError') {
           throw new Error('用户取消了保存')
         }
-        console.error(e)
-        // 由于mp4格式无法做到仅追加写入，所以只能先抛错误
         throw e
-        // const streamSaver = await StreamSaverLibrary
-        // writableStream = streamSaver.createWriteStream(filename) as unknown as WritableStream
-        // isAppendOnly = true
       }
+    } else if (selectedMethod === 'opfs') {
+      const root = await navigator.storage.getDirectory()
+      const tempName = `mux_temp_${Date.now()}${extension}`
+      opfsFileHandle = await root.getFileHandle(tempName, { create: true })
+      writableStream = await opfsFileHandle.createWritable()
+      pendingCleanupFiles.add(tempName)
+    } else if (selectedMethod === 'stream-saver') {
+      const streamSaver = await StreamSaverLibrary
+      writableStream = streamSaver.createWriteStream(filename) as unknown as WritableStream
+      isAppendOnly = true
     } else {
-      // 由于mp4格式无法做到仅追加写入，所以只能先抛错误
-      throw new Error('当前浏览器不支持保存文件')
-      // const streamSaver = await StreamSaverLibrary
-      // writableStream = streamSaver.createWriteStream(filename) as unknown as WritableStream
-      // isAppendOnly = true
+      throw new Error('当前浏览器不支持所选的保存方式')
     }
 
     try {
@@ -300,13 +385,32 @@ export async function run(action: DownloadVideoAction) {
         audio.url,
         writableStream,
         isAppendOnly,
+        options,
         i + 1,
         pages.length,
       )
+
+      if (selectedMethod === 'opfs' && opfsFileHandle) {
+        const file = await opfsFileHandle.getFile()
+        const url = URL.createObjectURL(file)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = filename
+        a.click()
+        URL.revokeObjectURL(url)
+        showCleanupToast(opfsFileHandle.name)
+      }
     } catch (e) {
       console.error(e)
       if (!isAppendOnly && 'abort' in writableStream) {
         await (writableStream as any).abort()
+      }
+      if (selectedMethod === 'opfs' && opfsFileHandle) {
+        const root = await navigator.storage.getDirectory()
+        await root
+          .removeEntry(opfsFileHandle.name)
+          .catch(error => console.error(`${pluginTitle} - 清理失败:`, error))
+        pendingCleanupFiles.delete(opfsFileHandle.name)
       }
       throw e
     }
