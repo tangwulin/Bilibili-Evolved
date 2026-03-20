@@ -3,15 +3,22 @@ import { Toast } from '@/core/toast'
 import { formatPercent } from '@/core/utils/formatters'
 import { title as pluginTitle } from '.'
 import type { Options } from './types'
-import { DownloadVideoAction } from '../../../../components/video/download/types'
+import {
+  DownloadVideoAction,
+  DownloadVideoInputItem,
+} from '../../../../components/video/download/types'
 import { MediaBunnyLibrary, StreamSaverLibrary } from '@/core/runtime-library'
 import { downloadToOPFS, formatProgress, getStreamWithProgress } from './util'
+import { getBlobByAid } from '@/components/video/video-cover'
+import { getSubtitleBlob } from '../../../../components/video/subtitle/download/utils'
 
 const defaultOptions: Options = {
   mediabunnyFormat: 'mp4',
   mediabunnyFastStart: 'reserve',
   mediabunnyOutputMethod: 'file-system-access',
   mediabunnyInputMethod: 'stream',
+  mediabunnyInjectCover: true,
+  mediabunnyInjectSubtitles: true,
 }
 
 const pendingCleanupFiles = new Set<string>()
@@ -60,7 +67,7 @@ window.addEventListener('beforeunload', () => {
 })
 
 async function single(
-  name: string,
+  input: DownloadVideoInputItem,
   videoUrl: string,
   audioUrl: string,
   writableStream: WritableStream,
@@ -88,6 +95,8 @@ async function single(
     mediabunnyFormat: selectedFormat,
     mediabunnyFastStart: selectedFastStart,
     mediabunnyInputMethod: selectedInputMethod,
+    mediabunnyInjectCover: injectCover,
+    mediabunnyInjectSubtitles: injectSubtitles,
   } = options
 
   try {
@@ -137,6 +146,29 @@ async function single(
       ])
       vSource = new ReadableStreamSource(vResult.stream)
       aSource = new ReadableStreamSource(aResult.stream)
+    }
+
+    let coverBlob: Blob | null = null
+    let subtitleBlob: Blob | null = null
+
+    if (injectCover) {
+      lines[2] = '正在获取封面...'
+      updateToast()
+      try {
+        coverBlob = await getBlobByAid(input.aid)
+      } catch (e) {
+        console.warn('获取封面失败', e)
+      }
+    }
+
+    if (injectSubtitles) {
+      lines[2] = '正在获取字幕...'
+      updateToast()
+      try {
+        subtitleBlob = await getSubtitleBlob('json', input)
+      } catch (e) {
+        console.warn('获取字幕失败', e)
+      }
     }
 
     lines[2] = '初始化混流引擎...'
@@ -223,9 +255,65 @@ async function single(
       maximumPacketCount: audioStats?.packetCount,
     })
 
+    const metadataTags: any = {
+      title: input.title,
+    }
+
+    if (coverBlob) {
+      const coverArrayBuffer = await coverBlob.arrayBuffer()
+      metadataTags.images = [
+        {
+          data: new Uint8Array(coverArrayBuffer),
+          mimeType: coverBlob.type || 'image/jpeg',
+          kind: 'coverFront',
+        },
+      ]
+    }
+
+    output.setMetadataTags(metadataTags)
+
+    let subtitleSource: any = null
+    let vtt = ''
+    if (subtitleBlob) {
+      const { TextSubtitleSource } = MediaBunny
+      try {
+        const text = await subtitleBlob.text()
+        const items = JSON.parse(text)
+        vtt = 'WEBVTT\n\n'
+        const formatTime = (seconds: number) => {
+          const h = Math.floor(seconds / 3600)
+          const m = Math.floor((seconds % 3600) / 60)
+          const s = Math.floor(seconds % 60)
+          const ms = Math.floor((seconds % 1) * 1000)
+          return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s
+            .toString()
+            .padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
+        }
+        for (const item of items) {
+          vtt += `${formatTime(item.from)} --> ${formatTime(item.to)}\n${item.content}\n\n`
+        }
+        subtitleSource = new TextSubtitleSource('webvtt')
+        output.addSubtitleTrack(subtitleSource)
+      } catch (e) {
+        console.warn('解析字幕失败', e)
+      }
+    }
+
     const pipePromise = mbReadableStream?.pipeTo(writableStream)
 
     await output.start()
+
+    const subtitleProcess = async () => {
+      if (subtitleSource && vtt) {
+        try {
+          await subtitleSource.add(vtt)
+          subtitleSource.close()
+        } catch (e) {
+          console.warn('添加字幕数据失败', e)
+          subtitleSource.close()
+        }
+      }
+    }
 
     let videoProgress = 0
     let audioProgress = 0
@@ -272,7 +360,7 @@ async function single(
       audioSource.close()
     }
 
-    await Promise.all([videoProcess(), audioProcess()])
+    await Promise.all([videoProcess(), audioProcess(), subtitleProcess()])
     await output.finalize()
 
     if (pipePromise) {
@@ -404,7 +492,7 @@ export async function run(action: DownloadVideoAction) {
 
     try {
       await single(
-        video.title,
+        page.input,
         video.url,
         audio.url,
         writableStream,

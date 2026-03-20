@@ -8,4 +8,6 @@ export interface Options {
   mediabunnyFastStart: MediaBunnyFastStart
   mediabunnyOutputMethod: MediaBunnyOutputMethod
   mediabunnyInputMethod: MediaBunnyInputMethod
+  mediabunnyInjectCover: boolean
+  mediabunnyInjectSubtitles: boolean
 }

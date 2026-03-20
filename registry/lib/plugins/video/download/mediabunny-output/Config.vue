@@ -71,7 +71,7 @@
         </template>
       </VDropdown>
       <div class="download-video-config-description" style="width: 100%">
-        决定合并后的视频文件如何“下载”到本地。
+        决定合并后的视频文件如何“导出”到本地。
         <div v-if="outputMethod === 'file-system-access'" style="margin-top: 4px">
           <b>优点:</b> 性能最佳, 兼容所有快速启动选项。下载完成后文件即在目录中, 无需额外导出。<br />
           <b>缺点:</b> 仅支持Chromium内核浏览器，且每次任务开始时都需要手动确认保存位置。
@@ -90,18 +90,50 @@
         </div>
       </div>
     </div>
+    <div
+      class="download-video-config-item"
+      style="flex-direction: row; width: 100%; margin-bottom: 8px"
+    >
+      <div
+        class="download-video-config-title"
+        style="flex-shrink: 0; display: flex; flex-wrap: nowrap"
+      >
+        注入封面：
+      </div>
+      <div style="display: flex; gap: 16px; width: 100%">
+        <SwitchBox v-model="injectCover" @change="saveOptions" />
+      </div>
+    </div>
+    <div
+      class="download-video-config-item"
+      style="flex-direction: column; width: 100%; margin-bottom: 8px"
+    >
+      <div style="width: 100%; display: flex; flex-direction: row">
+        <div
+          class="download-video-config-title"
+          style="flex-shrink: 0; display: flex; flex-wrap: nowrap"
+        >
+          注入字幕：
+        </div>
+        <div style="display: flex; gap: 16px; width: 100%">
+          <SwitchBox v-model="injectSubtitles" @change="saveOptions" />
+        </div>
+      </div>
+      <div class="download-video-config-description" style="width: 100%">
+        目前受MediaBunny的功能限制，仅能添加WebVTT格式的字幕，请自行确认兼容性。
+      </div>
+    </div>
     <div class="download-video-config-item" style="flex-wrap: wrap">
       <div class="download-video-config-title">提示：</div>
       <div class="download-video-config-description" style="width: 100%">
-        使用浏览器原生 <code>WebCodecs API</code> 进行混流，内存占用极低。目前 MediaBunny
-        暂不支持注入封面和弹幕元数据。
+        使用浏览器原生 <code>WebCodecs API</code> 进行混流，内存占用极低。
       </div>
     </div>
   </div>
 </template>
 
 <script lang="ts">
-import { VDropdown } from '@/ui'
+import { SwitchBox, VDropdown } from '@/ui'
 import { getComponentSettings } from '@/core/settings'
 import {
   MediaBunnyFastStart,
@@ -116,6 +148,8 @@ const defaultOptions: Options = {
   mediabunnyFastStart: 'reserve',
   mediabunnyOutputMethod: 'file-system-access',
   mediabunnyInputMethod: 'buffer',
+  mediabunnyInjectCover: true,
+  mediabunnyInjectSubtitles: true,
 }
 const { options: storedOptions } = getComponentSettings('downloadVideo')
 const options: Options = { ...defaultOptions, ...storedOptions }
@@ -127,6 +161,7 @@ const supportsStreamSaver = true // 脚本已集成
 export default Vue.extend({
   components: {
     VDropdown,
+    SwitchBox,
   },
   data() {
     const availableOutputMethods: MediaBunnyOutputMethod[] = []
@@ -156,6 +191,8 @@ export default Vue.extend({
       fastStart: options.mediabunnyFastStart,
       outputMethod: currentOutputMethod,
       inputMethod: options.mediabunnyInputMethod,
+      injectCover: options.mediabunnyInjectCover,
+      injectSubtitles: options.mediabunnyInjectSubtitles,
       formats,
       formatDisplayNames: {
         mp4: 'MP4',
@@ -202,6 +239,8 @@ export default Vue.extend({
       options.mediabunnyFastStart = this.fastStart
       options.mediabunnyOutputMethod = this.outputMethod
       options.mediabunnyInputMethod = this.inputMethod
+      options.mediabunnyInjectCover = this.injectCover
+      options.mediabunnyInjectSubtitles = this.injectSubtitles
       Object.assign(storedOptions, options)
     },
   },
