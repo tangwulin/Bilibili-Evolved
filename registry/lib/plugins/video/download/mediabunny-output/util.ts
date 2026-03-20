@@ -98,10 +98,17 @@ export async function downloadToOPFS(
     console.warn('分片段支持探测请求失败，将回退到单线程下载:', error)
   }
 
+  const { options } = getComponentSettings('downloadVideo')
+  const multithread = options.mediabunnyMultithread || 'auto'
+
   const MIN_CHUNK_SIZE = 5 * 1024 * 1024 // 5MB
   const THREAD_COUNT = 4
 
-  if (acceptRanges && contentLength > MIN_CHUNK_SIZE) {
+  const shouldMultithread =
+    multithread === 'force' ||
+    (multithread === 'auto' && acceptRanges && contentLength > MIN_CHUNK_SIZE)
+
+  if (multithread !== 'disable' && shouldMultithread) {
     return new Promise<FileSystemFileHandle>((resolve, reject) => {
       // 写入专用的 Web Worker (文件锁独占 & 高速同步写入，避免主线程卡死)
       const workerCode = `

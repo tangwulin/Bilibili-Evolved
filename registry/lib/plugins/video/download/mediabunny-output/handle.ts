@@ -17,6 +17,7 @@ const defaultOptions: Options = {
   mediabunnyFastStart: 'reserve',
   mediabunnyOutputMethod: 'file-system-access',
   mediabunnyInputMethod: 'stream',
+  mediabunnyMultithread: 'auto',
   mediabunnyInjectCover: true,
   mediabunnyInjectSubtitles: true,
   mediabunnySubtitleLanguages: [],

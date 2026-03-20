@@ -50,12 +50,36 @@
         决定如何从 Bilibili 获取视频和音频流。
         <div v-if="inputMethod === 'stream'" style="margin-top: 4px">
           <b>边下边合并 (流式):</b>
-          实时将网络流喂给混流引擎。速度最快, 几乎不占用额外磁盘空间。适合网络稳定的环境。
+          实时将网络流喂给混流引擎。边下边存, 几乎不占用额外磁盘空间。适合网络稳定的环境。
         </div>
         <div v-if="inputMethod === 'buffer'" style="margin-top: 4px">
           <b>下载后合并 (暂存):</b>
-          先将流完整下载到浏览器存储中, 再进行混流。稳定性高, 速度可能更快,
-          但需要两倍的剩余磁盘空间。
+          先将流完整下载到浏览器存储中, 再进行混流。支持多线程加速下载, 稳定性高、速度极快,
+          但合并时需要两倍的剩余磁盘空间。
+        </div>
+      </div>
+    </div>
+    <div
+      v-if="inputMethod === 'buffer'"
+      class="download-video-config-item"
+      style="flex-wrap: wrap; margin-bottom: 8px"
+    >
+      <div class="download-video-config-title">多线程下载：</div>
+      <VDropdown v-model="multithread" :items="multithreadOptions" @change="saveOptions">
+        <template #item="{ item }">
+          {{ multithreadDisplayNames[item] }}
+        </template>
+      </VDropdown>
+      <div class="download-video-config-description" style="width: 100%">
+        使用 Web Worker 并发下载视频分片，大幅提升下载速度。
+        <div v-if="multithread === 'auto'" style="margin-top: 4px">
+          <b>自动探测 (推荐):</b> 自动检测文件大小和服务器特性以决定是否开启分片。
+        </div>
+        <div v-if="multithread === 'disable'" style="margin-top: 4px">
+          <b>禁用:</b> 回退到单线程下载，适用于网络或浏览器的连接数受限的情况。
+        </div>
+        <div v-if="multithread === 'force'" style="margin-top: 4px">
+          <b>强制开启:</b> 无视探测结果强制分片。如果服务器不支持可能导致任务卡死。
         </div>
       </div>
     </div>
@@ -190,6 +214,7 @@ import {
   MediaBunnyInputMethod,
   MediaBunnyOutputFormat,
   MediaBunnyOutputMethod,
+  MediaBunnyMultithread,
   Options,
 } from './types'
 
@@ -198,6 +223,7 @@ const defaultOptions: Options = {
   mediabunnyFastStart: 'reserve',
   mediabunnyOutputMethod: 'file-system-access',
   mediabunnyInputMethod: 'buffer',
+  mediabunnyMultithread: 'auto',
   mediabunnyInjectCover: true,
   mediabunnyInjectSubtitles: true,
   mediabunnySubtitleLanguages: [],
@@ -247,6 +273,7 @@ export default Vue.extend({
       fastStart: options.mediabunnyFastStart,
       outputMethod: currentOutputMethod,
       inputMethod: options.mediabunnyInputMethod,
+      multithread: options.mediabunnyMultithread,
       injectCover: options.mediabunnyInjectCover,
       injectSubtitles: options.mediabunnyInjectSubtitles,
       subtitleLanguages: options.mediabunnySubtitleLanguages,
@@ -274,7 +301,13 @@ export default Vue.extend({
       inputMethodOptions: ['stream', 'buffer'] as MediaBunnyInputMethod[],
       inputMethodDisplayNames: {
         stream: '边下边合并 (流式)',
-        buffer: '下载完后合并 (暂存)',
+        buffer: '下载后合并 (暂存)',
+      },
+      multithreadOptions: ['auto', 'disable', 'force'] as MediaBunnyMultithread[],
+      multithreadDisplayNames: {
+        auto: '自动探测 (推荐)',
+        disable: '禁用',
+        force: '强制开启',
       },
     }
   },
@@ -344,6 +377,7 @@ export default Vue.extend({
       options.mediabunnyFastStart = this.fastStart
       options.mediabunnyOutputMethod = this.outputMethod
       options.mediabunnyInputMethod = this.inputMethod
+      options.mediabunnyMultithread = this.multithread
       options.mediabunnyInjectCover = this.injectCover
       options.mediabunnyInjectSubtitles = this.injectSubtitles
       options.mediabunnySubtitleLanguages = this.subtitleLanguages
