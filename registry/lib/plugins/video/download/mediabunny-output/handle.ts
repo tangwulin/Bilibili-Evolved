@@ -19,6 +19,38 @@ const defaultOptions: Options = {
   mediabunnyInputMethod: 'stream',
   mediabunnyInjectCover: true,
   mediabunnyInjectSubtitles: true,
+  mediabunnySubtitleLanguages: [],
+  mediabunnyDefaultSubtitle: '',
+}
+
+const getIso6392T = (lan: string) => {
+  const map: Record<string, string> = {
+    'zh-Hans': 'zho',
+    'zh-Hant': 'zho',
+    'zh-CN': 'zho',
+    'zh-HK': 'zho',
+    'zh-TW': 'zho',
+    'zh-SG': 'zho',
+    ja: 'jpn',
+    en: 'eng',
+    'en-US': 'eng',
+    'en-GB': 'eng',
+    ko: 'kor',
+    vi: 'vie',
+    th: 'tha',
+    id: 'ind',
+    fr: 'fra',
+    de: 'deu',
+    ru: 'rus',
+    es: 'spa',
+    pt: 'por',
+    it: 'ita',
+  }
+  if (lan.startsWith('ai-')) {
+    const sub = lan.slice(3)
+    return map[sub] || 'zho'
+  }
+  return map[lan] || lan.slice(0, 3).padEnd(3, 'x')
 }
 
 const pendingCleanupFiles = new Set<string>()
@@ -149,8 +181,6 @@ async function single(
     }
 
     let coverBlob: Blob | null = null
-    let subtitleBlob: Blob | null = null
-
     if (injectCover) {
       lines[2] = '正在获取封面...'
       updateToast()
@@ -161,13 +191,42 @@ async function single(
       }
     }
 
-    if (injectSubtitles) {
+    const subtitleData: { lan: string; blob: Blob; doc: string }[] = []
+    if (injectSubtitles && options.mediabunnySubtitleLanguages.length > 0) {
       lines[2] = '正在获取字幕...'
       updateToast()
       try {
-        subtitleBlob = await getSubtitleBlob('json', input)
+        const { getSubtitleList } = await import(
+          '../../../../components/video/subtitle/download/utils'
+        )
+        const allSubtitles = await getSubtitleList(input.aid, input.cid)
+        const selectedSubtitles = allSubtitles.filter(s =>
+          options.mediabunnySubtitleLanguages.includes(s.lan),
+        )
+
+        // 把默认字幕排在第一位
+        selectedSubtitles.sort((a, b) => {
+          if (a.lan === options.mediabunnyDefaultSubtitle) {
+            return -1
+          }
+          if (b.lan === options.mediabunnyDefaultSubtitle) {
+            return 1
+          }
+          return 0
+        })
+
+        for (const s of selectedSubtitles) {
+          try {
+            const blob = await getSubtitleBlob('json', { ...input, language: s.lan })
+            if (blob) {
+              subtitleData.push({ lan: s.lan, blob, doc: s.lan_doc })
+            }
+          } catch (e) {
+            console.warn(`获取字幕 ${s.lan_doc} 失败`, e)
+          }
+        }
       } catch (e) {
-        console.warn('获取字幕失败', e)
+        console.warn('获取字幕列表失败', e)
       }
     }
 
@@ -272,30 +331,42 @@ async function single(
 
     output.setMetadataTags(metadataTags)
 
-    let subtitleSource: any = null
-    let vtt = ''
-    if (subtitleBlob) {
+    const subtitleTrackInfos: { source: any; vtt: string }[] = []
+    if (subtitleData.length > 0) {
       const { TextSubtitleSource } = MediaBunny
-      try {
-        const text = await subtitleBlob.text()
-        const items = JSON.parse(text)
-        vtt = 'WEBVTT\n\n'
-        const formatTime = (seconds: number) => {
-          const h = Math.floor(seconds / 3600)
-          const m = Math.floor((seconds % 3600) / 60)
-          const s = Math.floor(seconds % 60)
-          const ms = Math.floor((seconds % 1) * 1000)
-          return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s
-            .toString()
-            .padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
+      let isDefaultLang = true
+      for (const data of subtitleData) {
+        try {
+          const text = await data.blob.text()
+          const items = JSON.parse(text)
+          let vtt = 'WEBVTT\n\n'
+          const formatTime = (seconds: number) => {
+            const h = Math.floor(seconds / 3600)
+            const m = Math.floor((seconds % 3600) / 60)
+            const s = Math.floor(seconds % 60)
+            const ms = Math.floor((seconds % 1) * 1000)
+            return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s
+              .toString()
+              .padStart(2, '0')}.${ms.toString().padStart(3, '0')}`
+          }
+          for (const item of items) {
+            vtt += `${formatTime(item.from)} --> ${formatTime(item.to)}\n${item.content}\n\n`
+          }
+          const subtitleSource = new TextSubtitleSource('webvtt')
+          output.addSubtitleTrack(subtitleSource, {
+            languageCode: getIso6392T(data.lan),
+            name: data.doc,
+            disposition: isDefaultLang
+              ? {
+                  default: true,
+                }
+              : undefined,
+          })
+          subtitleTrackInfos.push({ source: subtitleSource, vtt })
+          isDefaultLang = false
+        } catch (e) {
+          console.warn(`解析字幕 ${data.lan} 失败`, e)
         }
-        for (const item of items) {
-          vtt += `${formatTime(item.from)} --> ${formatTime(item.to)}\n${item.content}\n\n`
-        }
-        subtitleSource = new TextSubtitleSource('webvtt')
-        output.addSubtitleTrack(subtitleSource)
-      } catch (e) {
-        console.warn('解析字幕失败', e)
       }
     }
 
@@ -304,15 +375,17 @@ async function single(
     await output.start()
 
     const subtitleProcess = async () => {
-      if (subtitleSource && vtt) {
-        try {
-          await subtitleSource.add(vtt)
-          subtitleSource.close()
-        } catch (e) {
-          console.warn('添加字幕数据失败', e)
-          subtitleSource.close()
-        }
-      }
+      await Promise.all(
+        subtitleTrackInfos.map(async info => {
+          try {
+            await info.source.add(info.vtt)
+            info.source.close()
+          } catch (e) {
+            console.warn('添加字幕数据失败', e)
+            info.source.close()
+          }
+        }),
+      )
     }
 
     let videoProgress = 0
@@ -403,6 +476,9 @@ export async function run(action: DownloadVideoAction) {
   const { infos: pages } = action
   const { options: storedOptions } = getComponentSettings('downloadVideo')
   const options: Options = { ...defaultOptions, ...storedOptions }
+  if (options.mediabunnyInjectSubtitles && options.mediabunnySubtitleLanguages.length === 0) {
+    throw new Error('开启了注入字幕，但未选择任何字幕语言。请在设置中勾选需要注入的语言。')
+  }
   const {
     dashAudioExtension,
     dashFlacAudioExtension,

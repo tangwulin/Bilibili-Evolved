@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <div class="mediabunny-output-config">
     <div class="download-video-config-item" style="flex-wrap: wrap; margin-bottom: 8px">
       <div class="download-video-config-title">输出格式：</div>
@@ -86,7 +86,7 @@
           >。由于 StreamSaver 的流式特性, 无法在合并结束后回到文件开头写入元数据,
           因此仅能输出不依赖回溯的<b>分片 MP4 (fMP4)</b> 或 MKV<b
             >（但元数据在尾部的MKV的某些功能（例如文件持续时间或进度条）将被禁用或受到影响，请自行测试）。</b
-          ><br />）。此外, 若合并过程中浏览器崩溃或标签页被关闭, 生成的文件将因缺少索引而彻底损坏。
+          ><br />此外, 若合并过程中浏览器崩溃或标签页被关闭, 生成的文件将因缺少索引而彻底损坏。
         </div>
       </div>
     </div>
@@ -119,8 +119,57 @@
           <SwitchBox v-model="injectSubtitles" @change="saveOptions" />
         </div>
       </div>
+      <template v-if="injectSubtitles">
+        <div class="subtitle-selection-header">
+          <div class="subtitle-selection-title">选择语言:</div>
+          <div class="subtitle-selection-actions">
+            <VButton
+              type="transparent"
+              title="全选"
+              @click="forEachSubtitle(it => (it.checked = true))"
+            >
+              <VIcon :size="16" icon="mdi-checkbox-multiple-marked-circle" />
+            </VButton>
+            <VButton
+              type="transparent"
+              title="全不选"
+              @click="forEachSubtitle(it => (it.checked = false))"
+            >
+              <VIcon :size="16" icon="mdi-checkbox-multiple-blank-circle-outline" />
+            </VButton>
+            <VButton
+              type="transparent"
+              title="反选"
+              @click="forEachSubtitle(it => (it.checked = !it.checked))"
+            >
+              <VIcon :size="16" icon="mdi-circle-slice-4" />
+            </VButton>
+          </div>
+        </div>
+        <div class="subtitle-selection-items">
+          <div v-if="subtitles.length === 0" class="subtitle-selection-empty">
+            <VEmpty />
+          </div>
+          <div v-for="s of subtitles" :key="s.lan" class="subtitle-selection-item">
+            <CheckBox v-model="s.checked" @change="handleSubtitleChange">
+              {{ s.lan_doc }} ({{ s.lan }})
+            </CheckBox>
+          </div>
+        </div>
+        <div
+          v-if="selectedSubtitleLans.length > 0"
+          class="download-video-config-item subtitle-default-select"
+        >
+          <div class="download-video-config-title">默认字幕：</div>
+          <VDropdown v-model="defaultSubtitle" :items="selectedSubtitleLans" @change="saveOptions">
+            <template #item="{ item }">
+              {{ getSubtitleDoc(item) }}
+            </template>
+          </VDropdown>
+        </div>
+      </template>
       <div class="download-video-config-description" style="width: 100%">
-        目前受MediaBunny的功能限制，仅能添加WebVTT格式的字幕，请自行确认兼容性。
+        目前受 MediaBunny 的功能限制，仅能添加 WebVTT 格式的字幕，请自行确认兼容性。
       </div>
     </div>
     <div class="download-video-config-item" style="flex-wrap: wrap">
@@ -133,8 +182,9 @@
 </template>
 
 <script lang="ts">
-import { SwitchBox, VDropdown } from '@/ui'
+import { SwitchBox, VDropdown, VButton, VIcon, CheckBox, VEmpty } from '@/ui'
 import { getComponentSettings } from '@/core/settings'
+import { getSubtitleList, SubtitleInfo } from '../../../../components/video/subtitle/download/utils'
 import {
   MediaBunnyFastStart,
   MediaBunnyInputMethod,
@@ -150,6 +200,8 @@ const defaultOptions: Options = {
   mediabunnyInputMethod: 'buffer',
   mediabunnyInjectCover: true,
   mediabunnyInjectSubtitles: true,
+  mediabunnySubtitleLanguages: [],
+  mediabunnyDefaultSubtitle: '',
 }
 const { options: storedOptions } = getComponentSettings('downloadVideo')
 const options: Options = { ...defaultOptions, ...storedOptions }
@@ -162,6 +214,10 @@ export default Vue.extend({
   components: {
     VDropdown,
     SwitchBox,
+    VButton,
+    VIcon,
+    CheckBox,
+    VEmpty,
   },
   data() {
     const availableOutputMethods: MediaBunnyOutputMethod[] = []
@@ -193,6 +249,9 @@ export default Vue.extend({
       inputMethod: options.mediabunnyInputMethod,
       injectCover: options.mediabunnyInjectCover,
       injectSubtitles: options.mediabunnyInjectSubtitles,
+      subtitleLanguages: options.mediabunnySubtitleLanguages,
+      defaultSubtitle: options.mediabunnyDefaultSubtitle,
+      subtitles: [] as (SubtitleInfo & { checked: boolean })[],
       formats,
       formatDisplayNames: {
         mp4: 'MP4',
@@ -226,8 +285,54 @@ export default Vue.extend({
       }
       return this.formats
     },
+    selectedSubtitleLans(): string[] {
+      return this.subtitles.filter(s => s.checked).map(s => s.lan)
+    },
+  },
+  mounted() {
+    this.fetchSubtitles()
+    if (typeof coreApis !== 'undefined') {
+      coreApis.observer.videoChange(() => this.fetchSubtitles())
+    }
   },
   methods: {
+    async fetchSubtitles() {
+      try {
+        const { aid = unsafeWindow.aid, cid = unsafeWindow.cid } = unsafeWindow
+        if (!aid || !cid) {
+          return
+        }
+        const list = await getSubtitleList(aid, cid)
+        this.subtitles = list.map(s => ({
+          ...s,
+          checked: this.subtitleLanguages.includes(s.lan),
+        }))
+        if (this.defaultSubtitle && !this.selectedSubtitleLans.includes(this.defaultSubtitle)) {
+          this.defaultSubtitle = this.selectedSubtitleLans[0] || ''
+        } else if (!this.defaultSubtitle && this.selectedSubtitleLans.length > 0) {
+          this.defaultSubtitle = this.selectedSubtitleLans[0]
+        }
+      } catch (e) {
+        console.error('获取字幕列表失败', e)
+      }
+    },
+    handleSubtitleChange() {
+      this.subtitleLanguages = this.selectedSubtitleLans
+      if (this.defaultSubtitle && !this.selectedSubtitleLans.includes(this.defaultSubtitle)) {
+        this.defaultSubtitle = this.selectedSubtitleLans[0] || ''
+      } else if (!this.defaultSubtitle && this.selectedSubtitleLans.length > 0) {
+        this.defaultSubtitle = this.selectedSubtitleLans[0]
+      }
+      this.saveOptions()
+    },
+    getSubtitleDoc(lan: string) {
+      const s = this.subtitles.find(it => it.lan === lan)
+      return s ? `${s.lan_doc} (${s.lan})` : lan
+    },
+    forEachSubtitle(action: (item: any) => void) {
+      this.subtitles.forEach(action)
+      this.handleSubtitleChange()
+    },
     handleOutputMethodChange() {
       if (this.outputMethod === 'stream-saver' && this.format === 'mp4') {
         this.format = 'fragmented-mp4'
@@ -241,8 +346,54 @@ export default Vue.extend({
       options.mediabunnyInputMethod = this.inputMethod
       options.mediabunnyInjectCover = this.injectCover
       options.mediabunnyInjectSubtitles = this.injectSubtitles
+      options.mediabunnySubtitleLanguages = this.subtitleLanguages
+      options.mediabunnyDefaultSubtitle = this.defaultSubtitle
       Object.assign(storedOptions, options)
     },
   },
 })
 </script>
+
+<style lang="scss" scoped>
+@import 'common';
+.subtitle-selection {
+  &-header {
+    @include h-center();
+    margin-top: 8px;
+    margin-bottom: 4px;
+    width: 100%;
+  }
+  &-title {
+    flex-grow: 1;
+    font-size: 12px;
+    opacity: 0.8;
+  }
+  &-actions {
+    @include h-center();
+    .be-button {
+      padding: 2px;
+    }
+  }
+  &-items {
+    max-height: 120px;
+    overflow: auto;
+    width: 100%;
+    border: 1px solid #8884;
+    border-radius: 4px;
+    padding: 4px;
+    @include no-scrollbar();
+
+    .be-check-box {
+      padding: 2px 4px;
+    }
+  }
+  &-empty {
+    padding: 8px;
+    text-align: center;
+  }
+}
+.subtitle-default-select {
+  width: 100%;
+  margin-top: 8px;
+}
+</style>
