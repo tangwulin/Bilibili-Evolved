@@ -1,4 +1,5 @@
 import { formatDuration, formatFileSize, formatPercent } from '@/core/utils/formatters'
+import { getComponentSettings } from '@/core/settings'
 
 export function formatProgress(received: number, total: number, speed: number) {
   const fReceived = formatFileSize(received)
@@ -157,31 +158,32 @@ export async function downloadToOPFS(
                 throw new Error(`分段下载失败: ${response.status}`)
               }
 
-              const reader = response.body.getReader()
               let currentOffset = start
 
-              while (true) {
-                const { done, value } = await reader.read()
-                if (done) {
-                  break
-                }
+              return response.body.pipeTo(
+                new WritableStream({
+                  write(chunk) {
+                    const { length } = chunk
+                    // 使用 Transferable Objects 转移底层的 ArrayBuffer 所有权，实现零拷贝发送
+                    worker.postMessage({ type: 'write', offset: currentOffset, data: chunk }, [
+                      chunk.buffer,
+                    ])
 
-                // 将数据拷贝到 Worker 进行同步写入处理 (不用完全转移所有权以防底层切片异常)
-                worker.postMessage({ type: 'write', offset: currentOffset, data: value })
+                    currentOffset += length
+                    received += length
 
-                currentOffset += value.length
-                received += value.length
-
-                // 主线程计算并报告进度
-                const now = Date.now()
-                const deltaTime = (now - lastTime) / 1000
-                if (deltaTime > 1) {
-                  const speed = (received - lastReceived) / deltaTime
-                  onProgress(received, contentLength, speed)
-                  lastTime = now
-                  lastReceived = received
-                }
-              }
+                    // 主线程计算并报告进度
+                    const now = Date.now()
+                    const deltaTime = (now - lastTime) / 1000
+                    if (deltaTime > 1) {
+                      const speed = (received - lastReceived) / deltaTime
+                      onProgress(received, contentLength, speed)
+                      lastTime = now
+                      lastReceived = received
+                    }
+                  },
+                }),
+              )
             }
 
             for (let i = 0; i < THREAD_COUNT; i++) {
