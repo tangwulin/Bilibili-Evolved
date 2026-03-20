@@ -121,8 +121,8 @@ async function single(
       updateToast()
     }
 
-  const vFileName = `temp_video_${pageIndex}.m4s`
-  const aFileName = `temp_audio_${pageIndex}.m4s`
+  const vFileName = `temp_video_${input.aid}_${input.cid}.m4s`
+  const aFileName = `temp_audio_${input.aid}_${input.cid}.m4s`
 
   const {
     mediabunnyFormat: selectedFormat,
@@ -555,7 +555,7 @@ export async function run(action: DownloadVideoAction) {
       }
     } else if (selectedMethod === 'opfs') {
       const root = await navigator.storage.getDirectory()
-      const tempName = `mux_temp_${Date.now()}${extension}`
+      const tempName = `mux_temp_${page.input.aid}_${page.input.cid}${extension}`
       opfsFileHandle = await root.getFileHandle(tempName, { create: true })
       writableStream = await opfsFileHandle.createWritable()
       pendingCleanupFiles.add(tempName)
