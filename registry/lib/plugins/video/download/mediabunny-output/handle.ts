@@ -362,7 +362,7 @@ async function single(
                   default: true,
                 }
               : undefined,
-            maximumPacketCount: items.length, // * 2 + 10,
+            maximumPacketCount: items.length * 2 + 10,
           })
           subtitleTrackInfos.push({ source: subtitleSource, vtt })
           isDefaultLang = false
