@@ -8,7 +8,7 @@ import {
   DownloadVideoInputItem,
 } from '../../../../components/video/download/types'
 import { MediaBunnyLibrary, StreamSaverLibrary } from '@/core/runtime-library'
-import { downloadToOPFS, formatProgress, getStreamWithProgress } from './util'
+import { createFetchFn, downloadToOPFS, formatProgress } from './util'
 import { getBlobByAid } from '@/components/video/video-cover'
 import { getSubtitleBlob } from '../../../../components/video/subtitle/download/utils'
 
@@ -147,7 +147,7 @@ async function single(
       MkvOutputFormat,
       Output,
       StreamTarget,
-      ReadableStreamSource,
+      UrlSource,
     } = MediaBunny
 
     let vSource: any
@@ -173,12 +173,13 @@ async function single(
       lines[1] = '下载音频流: 启动中...'
       updateToast()
 
-      const [vResult, aResult] = await Promise.all([
-        getStreamWithProgress(videoUrl, downloadProgress(0, '下载视频流')),
-        getStreamWithProgress(audioUrl, downloadProgress(1, '下载音频流')),
-      ])
-      vSource = new ReadableStreamSource(vResult.stream)
-      aSource = new ReadableStreamSource(aResult.stream)
+      vSource = new UrlSource(videoUrl, {
+        fetchFn: createFetchFn(downloadProgress(0, '下载视频流')),
+        maxCacheSize: 32 * 1024 * 1024, // 32MB的缓存，缓解因为迟迟读不到元数据导致把整个文件都下载两遍
+      })
+      aSource = new UrlSource(audioUrl, {
+        fetchFn: createFetchFn(downloadProgress(1, '下载音频流')),
+      })
     }
 
     let coverBlob: Blob | null = null
@@ -264,14 +265,12 @@ async function single(
     let videoStats: any = null
     let audioStats: any = null
 
-    if (selectedInputMethod === 'buffer') {
-      const [vStats, aStats] = await Promise.all([
-        videoTrack.computePacketStats(),
-        audioTrack.computePacketStats(),
-      ])
-      videoStats = vStats
-      audioStats = aStats
-    }
+    const [vStats, aStats] = await Promise.all([
+      videoTrack.computePacketStats(),
+      audioTrack.computePacketStats(),
+    ])
+    videoStats = vStats
+    audioStats = aStats
 
     let target: any
     let mbReadableStream: ReadableStream | null = null

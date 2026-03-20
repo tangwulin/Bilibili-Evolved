@@ -15,6 +15,59 @@ export function formatProgress(received: number, total: number, speed: number) {
   return `${fReceived}${fTotal}${percent}${fSpeed}${remTime}`
 }
 
+export function createFetchFn(
+  onProgress: (received: number, total: number, speed: number) => void,
+) {
+  let received = 0
+  let lastTime = Date.now()
+  let lastReceived = 0
+  let length = 0
+
+  return async (input: RequestInfo | URL, init?: RequestInit) => {
+    const response = await fetch(input, init)
+    if (!response.ok || !response.body) {
+      return response
+    }
+
+    if (length === 0) {
+      const contentRange = response.headers.get('Content-Range')
+      if (contentRange) {
+        const match = contentRange.match(/\/(\d+)$/)
+        if (match) {
+          length = parseInt(match[1])
+        }
+      }
+      if (!length) {
+        length = parseInt(response.headers.get('Content-Length') || '0')
+      }
+    }
+
+    const transformStream = new TransformStream({
+      transform(chunk, controller) {
+        received += chunk.length
+        const now = Date.now()
+        const deltaTime = (now - lastTime) / 1000
+        if (deltaTime > 1) {
+          const speed = (received - lastReceived) / deltaTime
+          onProgress(received, length, speed)
+          lastTime = now
+          lastReceived = received
+        }
+        controller.enqueue(chunk)
+      },
+      flush() {
+        onProgress(received, length, 0)
+      },
+    })
+
+    return new Response(response.body.pipeThrough(transformStream), {
+      headers: response.headers,
+      status: response.status,
+      statusText: response.statusText,
+    })
+  }
+}
+
 export async function getStreamWithProgress(
   url: string,
   onProgress: (received: number, total: number, speed: number) => void,
