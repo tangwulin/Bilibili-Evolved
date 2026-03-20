@@ -1,5 +1,11 @@
 <template>
   <div class="mediabunny-output-config">
+    <div class="download-video-config-item" style="flex-wrap: wrap">
+      <div class="download-video-config-title">提示：</div>
+      <div class="download-video-config-description" style="width: 100%">
+        使用浏览器原生 <code>WebCodecs API</code> 进行混流，内存占用极低。
+      </div>
+    </div>
     <div class="download-video-config-item" style="flex-wrap: wrap; margin-bottom: 8px">
       <div class="download-video-config-title">输出格式：</div>
       <VDropdown v-model="format" :items="availableFormats" @change="saveOptions">
@@ -27,9 +33,9 @@
         </template>
       </VDropdown>
       <div class="download-video-config-description" style="width: 100%">
-        将 MP4 元数据 (moov) 移至文件开头以便在未完全下载时预览。
+        将 MP4 元数据 (moov) 移至文件开头以降低大文件的第一帧播放延迟和便于在文件未完全下载时预览。
         <div v-if="fastStart === 'reserve'" style="margin-top: 4px">
-          <b>预留空间 (推荐):</b> 在文件头预留 1MB 空间。适合大文件, 性能与兼容性最佳。
+          <b>预留空间 (推荐):</b> 在文件头预留一定空间。适合大文件, 性能与兼容性最佳。
         </div>
         <div v-if="fastStart === 'in-memory'" style="margin-top: 4px">
           <b>内存缓存:</b> 在内存中重排元数据。处理超大文件时可能导致浏览器崩溃。
@@ -47,7 +53,7 @@
         </template>
       </VDropdown>
       <div class="download-video-config-description" style="width: 100%">
-        决定如何从 Bilibili 获取视频和音频流。
+        决定如何获取视频和音频流。
         <div v-if="inputMethod === 'stream'" style="margin-top: 4px">
           <b>边下边合并 (流式):</b>
           实时将网络流喂给混流引擎。边下边存, 几乎不占用额外磁盘空间。适合网络稳定的环境。
@@ -76,7 +82,8 @@
           <b>自动探测 (推荐):</b> 自动检测文件大小和服务器特性以决定是否开启分片。
         </div>
         <div v-if="multithread === 'disable'" style="margin-top: 4px">
-          <b>禁用:</b> 回退到单线程下载，适用于网络或浏览器的连接数受限的情况。
+          <b>禁用:</b>
+          回退到单线程下载，适用于网络或浏览器的连接数受限的情况（推荐在同时下载多个文件时选择此选项）。
         </div>
         <div v-if="multithread === 'force'" style="margin-top: 4px">
           <b>强制开启:</b> 无视探测结果强制分片。如果服务器不支持可能导致任务卡死。
@@ -194,12 +201,6 @@
       </template>
       <div class="download-video-config-description" style="width: 100%">
         目前受 MediaBunny 的功能限制，仅能添加 WebVTT 格式的字幕，请自行确认兼容性。
-      </div>
-    </div>
-    <div class="download-video-config-item" style="flex-wrap: wrap">
-      <div class="download-video-config-title">提示：</div>
-      <div class="download-video-config-description" style="width: 100%">
-        使用浏览器原生 <code>WebCodecs API</code> 进行混流，内存占用极低。
       </div>
     </div>
   </div>
