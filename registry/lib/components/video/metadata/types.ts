@@ -1,4 +1,4 @@
-export type MetadataType = 'ffmetadata' | 'ogm'
+export type MetadataType = 'ffmetadata' | 'ogm' | 'json'
 
 export interface ViewPoint {
   content: string

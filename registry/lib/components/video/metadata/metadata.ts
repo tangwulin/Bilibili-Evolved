@@ -222,6 +222,113 @@ async function generateChapterFile(aid: string = unsafeWindow.aid, cid: string =
   return null
 }
 
+async function generateJSONMetadata(
+  aid: string = unsafeWindow.aid,
+  cid: string = unsafeWindow.cid,
+) {
+  const data = await fetchMetadata(aid, cid)
+  const { basic } = data
+  const {
+    options: { fieldsMode, timeFormat, includeStat },
+  } = getComponentSettings<Options>(componentName)
+
+  const generated = new Date()
+
+  const result: Record<string, any> = {
+    title: `${basic.title} - ${data.page.title}`,
+    description: basic.description,
+    artist: basic.up.name,
+  }
+
+  if (fieldsMode === FieldsMode.ALL) {
+    const custom: Record<string, any> = {
+      metadata_generated: formatTime(generated, timeFormat),
+      title: basic.title,
+      description: basic.description,
+      publish_date: formatTime(new Date(basic.pubdate * 1000), timeFormat),
+      aid: basic.aid,
+      bvid: basic.bvid,
+      cid: data.page.cid,
+      up_name: basic.up.name,
+      up_uid: basic.up.uid,
+    }
+
+    if (basic.staffs) {
+      custom.staffs = formatStaffs(basic.staffs)
+    }
+
+    Object.assign(custom, {
+      page_title: data.page.title,
+      pages: basic.pages.length,
+      page: data.page.pageNumber,
+      category_id: basic.tagId,
+      category_name: basic.tagName,
+    })
+
+    if (data.tags.tag) {
+      custom.tags = tagWithId(data.tags.tag)
+    }
+    if (data.tags.topic) {
+      custom.topic = tagWithId(data.tags.topic)
+    }
+    if (data.tags.bgm) {
+      custom.bgm = fixBgmTag(data.tags.bgm)
+    }
+
+    if (data.bangumi) {
+      const d = data.bangumi
+      Object.assign(custom, {
+        bangumi_media_id: d.mediaId,
+        bangumi_season_id: d.seasonId,
+        bangumi_season_title: d.seasonTitle,
+        bangumi_series_id: d.seriesId,
+        bangumi_series_title: d.seriesTitle,
+        bangumi_section_title: d.episode.section,
+        bangumi_episode_id: d.episode.epid,
+        bangumi_episode_title: d.episode.title,
+        bangumi_area: d.areas.map(x => x.name).join(','),
+      })
+    }
+
+    if (includeStat) {
+      const s = basic.stat
+      Object.assign(custom, {
+        stat_view: s.view,
+        stat_like: s.like,
+        stat_coin: s.coin,
+        stat_favorite: s.favorite,
+        stat_share: s.share,
+        stat_danmaku: s.danmaku,
+        stat_reply: s.reply,
+      })
+      if (s.his_rank > 0) {
+        custom.stat_highest_rank = s.his_rank
+      }
+    }
+
+    if (data.quality) {
+      custom.quality = data.quality.value
+      custom.quality_label = data.quality.name
+    }
+
+    // Add bilibili prefix to all custom fields
+    Object.keys(custom).forEach(key => {
+      const value = custom[key]
+      result[`bilibili_${key}`] = Array.isArray(value) ? value.join(',') : value.toString()
+    })
+  }
+
+  if (data.viewPoints.length > 0) {
+    result.chapters = data.viewPoints.map(chapter => ({
+      from: chapter.from,
+      to: chapter.to,
+      title: chapter.content,
+    }))
+  }
+
+  return JSON.stringify(result)
+}
+
 export async function generateByType(
   type: MetadataType,
   aid: string = unsafeWindow.aid,
@@ -231,6 +338,9 @@ export async function generateByType(
   switch (type) {
     case 'ogm':
       method = generateChapterFile
+      break
+    case 'json':
+      method = generateJSONMetadata
       break
     default:
     case 'ffmetadata':
