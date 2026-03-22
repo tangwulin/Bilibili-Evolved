@@ -19,6 +19,7 @@ const defaultOptions: Options = {
   mediabunnyInputMethod: 'stream',
   mediabunnyMultithread: 'auto',
   mediabunnyInjectCover: true,
+  mediabunnyInjectMetadata: true,
   mediabunnyInjectSubtitles: true,
   mediabunnySubtitleLanguages: [],
   mediabunnyDefaultSubtitle: '',
@@ -109,6 +110,7 @@ async function single(
   pageIndex = 1,
   totalPages = 1,
   duration = 0,
+  metadataJsonStr = '',
 ) {
   const toast = Toast.info('', `${pluginTitle} - ${pageIndex} / ${totalPages}`)
   const lines: string[] = []
@@ -129,6 +131,7 @@ async function single(
     mediabunnyFastStart: selectedFastStart,
     mediabunnyInputMethod: selectedInputMethod,
     mediabunnyInjectCover: injectCover,
+    mediabunnyInjectMetadata: injectMetadata,
     mediabunnyInjectSubtitles: injectSubtitles,
   } = options
 
@@ -290,9 +293,15 @@ async function single(
     let outputFormat: any
     if (selectedFormat === 'mp4') {
       const fastStart = isAppendOnly ? false : selectedFastStart
-      outputFormat = new Mp4OutputFormat({ fastStart })
+      outputFormat = new Mp4OutputFormat({
+        fastStart,
+        metadataFormat: injectMetadata && metadataJsonStr ? 'mdta' : 'auto',
+      })
     } else if (selectedFormat === 'fragmented-mp4') {
-      outputFormat = new Mp4OutputFormat({ fastStart: 'fragmented' })
+      outputFormat = new Mp4OutputFormat({
+        fastStart: 'fragmented',
+        metadataFormat: injectMetadata && metadataJsonStr ? 'mdta' : 'auto',
+      })
     } else if (selectedFormat === 'mkv') {
       outputFormat = new MkvOutputFormat({ appendOnly: isAppendOnly })
     }
@@ -314,8 +323,44 @@ async function single(
       maximumPacketCount: audioStats?.packetCount,
     })
 
-    const metadataTags: any = {
+    let metadataTags: any = {
       title: input.title,
+    }
+
+    if (injectMetadata && metadataJsonStr) {
+      try {
+        const parsedMeta = JSON.parse(metadataJsonStr)
+        metadataTags = {
+          title: parsedMeta.title || input.title,
+          description: parsedMeta.description,
+          artist: parsedMeta.artist,
+        }
+
+        const pubDateStr = parsedMeta.bilibili_publish_date || parsedMeta.publish_date
+        if (pubDateStr) {
+          const parsedDate = new Date(pubDateStr)
+          if (!Number.isNaN(parsedDate.getTime())) {
+            metadataTags.date = parsedDate
+          }
+        }
+
+        const rawTags: Record<string, string> = {}
+        for (const [key, value] of Object.entries(parsedMeta)) {
+          if (
+            !['title', 'description', 'artist', 'chapters'].includes(key) &&
+            value !== undefined &&
+            value !== null &&
+            value !== ''
+          ) {
+            rawTags[key] = String(value)
+          }
+        }
+        if (Object.keys(rawTags).length > 0) {
+          metadataTags.raw = rawTags
+        }
+      } catch (e) {
+        console.warn('解析元数据失败', e)
+      }
     }
 
     if (coverBlob) {
@@ -480,6 +525,16 @@ export async function run(action: DownloadVideoAction) {
   if (options.mediabunnyInjectSubtitles && options.mediabunnySubtitleLanguages.length === 0) {
     throw new Error('开启了注入字幕，但未选择任何字幕语言。请在设置中勾选需要注入的语言。')
   }
+
+  let metadataProvider: any = null
+  if (options.mediabunnyInjectMetadata) {
+    try {
+      const { generateByType } = await import('../../../../components/video/metadata/metadata')
+      metadataProvider = generateByType
+    } catch (e) {
+      console.warn('获取元数据生成器失败', e)
+    }
+  }
   const {
     dashAudioExtension,
     dashFlacAudioExtension,
@@ -568,6 +623,15 @@ export async function run(action: DownloadVideoAction) {
     }
 
     try {
+      let metadataJsonStr = ''
+      if (metadataProvider) {
+        try {
+          metadataJsonStr = await metadataProvider('json', page.input.aid, page.input.cid)
+        } catch (e) {
+          console.warn('未能获取 JSON 元数据', e)
+        }
+      }
+
       await single(
         page.input,
         video.url,
@@ -578,6 +642,7 @@ export async function run(action: DownloadVideoAction) {
         i + 1,
         pages.length,
         page.fragments[0].length,
+        metadataJsonStr,
       )
 
       if (selectedMethod === 'opfs' && opfsFileHandle) {

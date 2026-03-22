@@ -136,6 +136,21 @@
       </div>
     </div>
     <div
+      v-if="hasMetadata"
+      class="download-video-config-item"
+      style="flex-direction: row; width: 100%; margin-bottom: 8px"
+    >
+      <div
+        class="download-video-config-title"
+        style="flex-shrink: 0; display: flex; flex-wrap: nowrap"
+      >
+        注入元数据：
+      </div>
+      <div style="display: flex; gap: 16px; width: 100%">
+        <SwitchBox v-model="injectMetadata" @change="saveOptions" />
+      </div>
+    </div>
+    <div
       class="download-video-config-item"
       style="flex-direction: column; width: 100%; margin-bottom: 8px"
     >
@@ -208,7 +223,7 @@
 
 <script lang="ts">
 import { SwitchBox, VDropdown, VButton, VIcon, CheckBox, VEmpty } from '@/ui'
-import { getComponentSettings } from '@/core/settings'
+import { getComponentSettings, isComponentEnabled } from '@/core/settings'
 import { getSubtitleList, SubtitleInfo } from '../../../../components/video/subtitle/download/utils'
 import {
   MediaBunnyFastStart,
@@ -226,6 +241,7 @@ const defaultOptions: Options = {
   mediabunnyInputMethod: 'buffer',
   mediabunnyMultithread: 'auto',
   mediabunnyInjectCover: true,
+  mediabunnyInjectMetadata: true,
   mediabunnyInjectSubtitles: true,
   mediabunnySubtitleLanguages: [],
   mediabunnyDefaultSubtitle: '',
@@ -247,6 +263,7 @@ export default Vue.extend({
     VEmpty,
   },
   data() {
+    const hasMetadata = isComponentEnabled('saveVideoMetadata')
     const availableOutputMethods: MediaBunnyOutputMethod[] = []
     if (supportsFileSystemAccess) {
       availableOutputMethods.push('file-system-access')
@@ -275,7 +292,9 @@ export default Vue.extend({
       outputMethod: currentOutputMethod,
       inputMethod: options.mediabunnyInputMethod,
       multithread: options.mediabunnyMultithread,
+      hasMetadata,
       injectCover: options.mediabunnyInjectCover,
+      injectMetadata: hasMetadata && options.mediabunnyInjectMetadata,
       injectSubtitles: options.mediabunnyInjectSubtitles,
       subtitleLanguages: options.mediabunnySubtitleLanguages,
       defaultSubtitle: options.mediabunnyDefaultSubtitle,
@@ -380,6 +399,7 @@ export default Vue.extend({
       options.mediabunnyInputMethod = this.inputMethod
       options.mediabunnyMultithread = this.multithread
       options.mediabunnyInjectCover = this.injectCover
+      options.mediabunnyInjectMetadata = this.injectMetadata
       options.mediabunnyInjectSubtitles = this.injectSubtitles
       options.mediabunnySubtitleLanguages = this.subtitleLanguages
       options.mediabunnyDefaultSubtitle = this.defaultSubtitle

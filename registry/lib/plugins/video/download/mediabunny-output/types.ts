@@ -11,6 +11,7 @@ export interface Options {
   mediabunnyInputMethod: MediaBunnyInputMethod
   mediabunnyMultithread: MediaBunnyMultithread
   mediabunnyInjectCover: boolean
+  mediabunnyInjectMetadata: boolean
   mediabunnyInjectSubtitles: boolean
   mediabunnySubtitleLanguages: string[]
   mediabunnyDefaultSubtitle: string
